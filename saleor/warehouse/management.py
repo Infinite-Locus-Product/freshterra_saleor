@@ -1,3 +1,4 @@
+import logging
 import math
 from collections import defaultdict
 from collections.abc import Iterable
@@ -8,6 +9,7 @@ from django.db import transaction
 from django.db.models import F, Sum
 from django.db.models.expressions import Exists, OuterRef
 from django.db.models.functions import Coalesce
+from graphql_relay import from_global_id
 
 from ..channel import AllocationStrategy
 from ..checkout.models import CheckoutLine
@@ -40,6 +42,80 @@ from .models import (
 
 if TYPE_CHECKING:
     from ..channel.models import Channel
+
+logger = logging.getLogger(__name__)
+
+# FreshTerra allocation-hint contract.
+#
+# The FreshTerra backend stamps the target Saleor Warehouse GID under this key on
+# the checkout shipping-address node metadata. That metadata is copied onto the
+# order shipping address during checkout completion, so it is reachable at
+# allocation time. When the hint is present, stock reservation and allocation
+# must be constrained to that single warehouse (strict: if the warehouse is
+# short, the usual InsufficientStock is raised instead of spilling over to other
+# warehouses). When the key is absent or unusable, the default multi-warehouse
+# behavior is preserved, so this patch is inert until the key is stamped.
+FT_WAREHOUSE_METADATA_KEY = "ft_warehouse_id"
+
+
+def resolve_ft_warehouse_pk(metadata: dict | None) -> str | None:
+    """Return the target warehouse pk from a FreshTerra allocation hint.
+
+    ``metadata`` is the ``metadata`` dict of a checkout/order shipping address.
+    Returns the warehouse primary key (a UUID string) when a valid
+    ``FT_WAREHOUSE_METADATA_KEY`` GID is present, otherwise ``None`` (keep the
+    default, unconstrained behavior). A malformed or non-Warehouse GID is logged
+    and ignored rather than raising, so a bad hint never blocks every order.
+    """
+    if not metadata:
+        return None
+    global_id = metadata.get(FT_WAREHOUSE_METADATA_KEY)
+    if not global_id:
+        return None
+    try:
+        type_name, warehouse_pk = from_global_id(global_id)
+    except (ValueError, TypeError, UnicodeDecodeError):
+        logger.warning(
+            "Ignoring malformed %s allocation hint: %r",
+            FT_WAREHOUSE_METADATA_KEY,
+            global_id,
+        )
+        return None
+    if type_name != "Warehouse" or not warehouse_pk:
+        logger.warning(
+            "Ignoring %s allocation hint with unexpected GID type %r",
+            FT_WAREHOUSE_METADATA_KEY,
+            type_name,
+        )
+        return None
+    return warehouse_pk
+
+
+def _ft_warehouse_pk_from_order_lines(
+    order_lines_info: list["OrderLineInfo"],
+) -> str | None:
+    """Resolve the FreshTerra warehouse hint from order lines.
+
+    The hint lives on the order shipping-address metadata, reachable through the
+    order attached to any order line. Resolution is fully defensive: any lookup
+    problem falls back to the default (unconstrained) allocation behavior.
+    """
+    try:
+        for line_info in order_lines_info:
+            order = getattr(getattr(line_info, "line", None), "order", None)
+            if order is None:
+                continue
+            address = order.shipping_address
+            if address is None:
+                return None
+            return resolve_ft_warehouse_pk(address.metadata)
+    except Exception:  # noqa: BLE001 - a hint lookup must never break allocation
+        logger.warning(
+            "Failed to resolve %s allocation hint",
+            FT_WAREHOUSE_METADATA_KEY,
+            exc_info=True,
+        )
+    return None
 
 
 class StockData(NamedTuple):
@@ -110,6 +186,14 @@ def allocate_stocks(
 
     if additional_filter_lookup is not None:
         filter_lookup.update(additional_filter_lookup)
+
+    # FreshTerra allocation hint: when the order's shipping address carries a
+    # `ft_warehouse_id` GID, restrict the candidate stocks to that warehouse only.
+    # If it is short, InsufficientStock is raised below (strict) instead of
+    # allocating from other warehouses. Absent/invalid hint => default behavior.
+    ft_warehouse_pk = _ft_warehouse_pk_from_order_lines(order_lines_info)
+    if ft_warehouse_pk is not None:
+        filter_lookup["warehouse_id"] = ft_warehouse_pk
 
     # in case of click and collect order, we need to check local or global stock
     # regardless of the country code

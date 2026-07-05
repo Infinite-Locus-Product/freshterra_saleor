@@ -1,4 +1,5 @@
 import datetime
+import logging
 from collections import defaultdict
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, NamedTuple
@@ -12,17 +13,46 @@ from ..core.exceptions import InsufficientStock, InsufficientStockData
 from ..core.tracing import traced_atomic_transaction
 from ..product.models import ProductVariant, ProductVariantChannelListing
 from .lock_objects import stock_qs_select_for_update
-from .management import sort_stocks
+from .management import resolve_ft_warehouse_pk, sort_stocks
 from .models import Allocation, PreorderReservation, Reservation
 
 if TYPE_CHECKING:
     from ..channel.models import Channel
     from ..checkout.fetch import CheckoutLine
 
+logger = logging.getLogger(__name__)
+
 
 class StockData(NamedTuple):
     pk: int
     quantity: int
+
+
+def _ft_warehouse_pk_from_checkout_lines(checkout_lines) -> str | None:
+    """Resolve the FreshTerra warehouse hint from checkout lines.
+
+    Mirrors the allocation-side hint (see
+    ``saleor.warehouse.management.resolve_ft_warehouse_pk``) so that stock is
+    reserved from the same warehouse it will later be allocated from. The hint
+    lives on the checkout shipping-address metadata. Resolution is fully
+    defensive: any lookup problem falls back to the default (unconstrained)
+    reservation behavior.
+    """
+    try:
+        for line in checkout_lines:
+            checkout = getattr(line, "checkout", None)
+            if checkout is None:
+                continue
+            address = checkout.shipping_address
+            if address is None:
+                return None
+            return resolve_ft_warehouse_pk(address.metadata)
+    except Exception:  # noqa: BLE001 - a hint lookup must never break reservation
+        logger.warning(
+            "Failed to resolve ft_warehouse_id reservation hint",
+            exc_info=True,
+        )
+    return None
 
 
 @traced_atomic_transaction()
@@ -106,11 +136,22 @@ def reserve_stocks(
     if not checkout_lines:
         return
 
-    stocks = list(
+    stocks_qs = (
         stock_qs_select_for_update()
         .get_variants_stocks_for_country(country_code, channel.slug, variants)
         .order_by("pk")
-        .values("id", "product_variant", "pk", "quantity", "warehouse_id")
+    )
+
+    # FreshTerra allocation hint: when the checkout's shipping address carries a
+    # `ft_warehouse_id` GID, reserve stock from that warehouse only, so reservation
+    # agrees with the later warehouse-constrained allocation. Absent/invalid hint
+    # => default behavior (this block is inert until the key is stamped).
+    ft_warehouse_pk = _ft_warehouse_pk_from_checkout_lines(checkout_lines)
+    if ft_warehouse_pk is not None:
+        stocks_qs = stocks_qs.filter(warehouse_id=ft_warehouse_pk)
+
+    stocks = list(
+        stocks_qs.values("id", "product_variant", "pk", "quantity", "warehouse_id")
     )
     stocks_id = [stock.pop("id") for stock in stocks]
 
