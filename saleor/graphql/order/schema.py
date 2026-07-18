@@ -53,6 +53,7 @@ from .mutations.order_line_discount_remove import OrderLineDiscountRemove
 from .mutations.order_line_discount_update import OrderLineDiscountUpdate
 from .mutations.order_line_update import OrderLineUpdate
 from .mutations.order_lines_create import OrderLinesCreate
+from .mutations.order_lines_partial_cancel import OrderLinesPartialCancel
 from .mutations.order_mark_as_paid import OrderMarkAsPaid
 from .mutations.order_note_add import OrderAddNote, OrderNoteAdd
 from .mutations.order_note_update import OrderNoteUpdate
@@ -282,6 +283,7 @@ class OrderMutations(graphene.ObjectType):
 
     order_lines_create = OrderLinesCreate.Field()
     order_line_delete = OrderLineDelete.Field()
+    order_lines_partial_cancel = OrderLinesPartialCancel.Field()
     order_line_update = OrderLineUpdate.Field()
 
     order_discount_add = OrderDiscountAdd.Field()
