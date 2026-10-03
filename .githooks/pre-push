@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Delivery Rule 6: full-suite test gate. See .githooks/test-gate.sh
+exec "$(git rev-parse --show-toplevel)/.githooks/test-gate.sh" pre-push

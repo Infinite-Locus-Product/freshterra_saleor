@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Delivery Rule 6: tests related to staged files (+ pre-commit framework if configured)
+ROOT="$(git rev-parse --show-toplevel)"
+if [ -f "$ROOT/.pre-commit-config.yaml" ] && command -v pre-commit >/dev/null 2>&1; then
+  pre-commit run || exit 1
+elif [ -f "$ROOT/.pre-commit-config.yaml" ]; then
+  echo "WARNING: .pre-commit-config.yaml exists but the pre-commit tool is not installed - its hooks did NOT run (pip install pre-commit)." >&2
+fi
+exec "$ROOT/.githooks/test-gate.sh" pre-commit

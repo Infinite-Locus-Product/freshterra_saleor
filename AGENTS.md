@@ -222,3 +222,22 @@ Do:
 def foo():
   """Doc string"""
 ```
+
+## Delivery Rules - project values
+Non-negotiable for every task in this repo (full text in the maintainer's `~/.claude/CLAUDE.md` -> "Delivery Rules"):
+
+1. **Time report** - after the prod deploy, ask the developer's estimate and report the actual build time from session logs. The developer logs it in Jira.
+2. **UT doc** - after the staging deploy, write `<TICKET>-staging-walkthrough.docx` (test details, what changed, results, step-by-step with screenshots). The developer attaches it to the ticket before it moves to QA.
+3. **Jira status** - ask before every transition (In Progress at pick-up, QA after staging + review + UT doc, Done = live on prod).
+4. **TDD** - failing tests first, then code.
+5. **PR review** - a fresh agent that did not build the feature reviews the PR. Findings go as inline PR comments, each fixed or deferred with a reason. A Jira summary is posted after every review and fix round.
+6. **Test gate** - pre-push runs the full suite and must pass >= 98%. 0 tests is blocked.
+7. **Runbook + Release Note** - drafted at pick-up in Confluence and updated alongside every change.
+
+| Item | Value |
+|---|---|
+| Jira project | `FRES` (zapgift.atlassian.net) |
+| Confluence space | `EF` - Runbook and Release Notes folders (EF template structure) |
+| Production branch (PR target) | `main` |
+| Test gate | `.githooks/test-gate.sh` - runner `pytest`, full suite >= 98% on pre-push, related tests on pre-commit |
+| Hook activation | run `git config core.hooksPath .githooks` once per clone |
