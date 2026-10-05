@@ -226,7 +226,7 @@ def foo():
 ## Delivery Rules - project values
 Non-negotiable for every task in this repo (full text in the maintainer's `~/.claude/CLAUDE.md` -> "Delivery Rules"):
 
-1. **Time report** - after the prod deploy, ask the developer's estimate and report the actual build time from session logs. The developer logs it in Jira.
+1. **Time logging** - after the prod deploy, first share the actual time taken (from session logs) with a breakdown of where it went, then ask the developer's estimate, then log both on the Jira ticket (Original Estimate + a worklog for time spent) and add a comment with the breakdown and the variance.
 2. **UT doc** - after the staging deploy, write `<TICKET>-staging-walkthrough.docx` (test details, what changed, results, step-by-step with screenshots). The developer attaches it to the ticket before it moves to QA.
 3. **Jira status** - ask before every transition (In Progress at pick-up, QA after staging + review + UT doc, Done = live on prod).
 4. **TDD** - failing tests first, then code.
